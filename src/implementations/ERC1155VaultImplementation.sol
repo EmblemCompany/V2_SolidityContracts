@@ -536,7 +536,7 @@ contract ERC1155VaultImplementation is
      * @param value The amount to burn
      */
     function burn(address account, uint256 id, uint256 value) public virtual override onlyDiamond {
-        super.burn(account, id, value);
+        _burn(account, id, value);
     }
 
     function burnBatch(address account, uint256[] memory ids, uint256[] memory values)
@@ -545,6 +545,6 @@ contract ERC1155VaultImplementation is
         override
         onlyDiamond
     {
-        super.burnBatch(account, ids, values);
+        _burnBatch(account, ids, values);
     }
 }

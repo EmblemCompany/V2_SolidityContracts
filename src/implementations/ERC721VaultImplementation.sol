@@ -318,7 +318,7 @@ contract ERC721VaultImplementation is
         delete _reverseTokenIdMap[externalTokenId];
         delete _externalTokenIdMap[internalTokenId];
 
-        super.burn(internalTokenId);
+        _burn(internalTokenId);
 
         emit TokenBurned(_msgSender(), internalTokenId, externalTokenId, data);
     }

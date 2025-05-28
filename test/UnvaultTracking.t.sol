@@ -488,18 +488,18 @@ contract UnvaultTrackingTest is DiamondVaultTest {
             timestamp
         );
 
-        // Try to burn directly - should fail
+        // Try to burn directly from user - should fail
         vm.expectRevert(abi.encodeWithSignature("NotDiamond()"));
         ERC721VaultImplementation(nftCollection).burn(2);
-
-        // Try to burn through diamond but not unvault process - should fail
         vm.stopPrank();
+
+        // Diamond can burn directly - this is allowed
         vm.prank(address(diamond));
-        vm.expectRevert(); // Will fail since burn should only happen through unvault
         ERC721VaultImplementation(nftCollection).burn(2);
 
-        // Verify token still exists
-        assertEq(ERC721VaultImplementation(nftCollection).ownerOf(2), tokenHolder);
+        // Verify token was burned
+        vm.expectRevert(abi.encodeWithSignature("OwnerQueryForNonexistentToken()"));
+        ERC721VaultImplementation(nftCollection).ownerOf(2);
     }
 
     function testBurnAddressWithUnvault() public {
