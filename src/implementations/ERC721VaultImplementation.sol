@@ -318,8 +318,6 @@ contract ERC721VaultImplementation is
         delete _reverseTokenIdMap[externalTokenId];
         delete _externalTokenIdMap[internalTokenId];
 
-        // Use _burn instead of super.burn to bypass approval checks
-        // The onlyDiamond modifier provides sufficient authorization
         _burn(internalTokenId);
 
         emit TokenBurned(_msgSender(), internalTokenId, externalTokenId, data);
