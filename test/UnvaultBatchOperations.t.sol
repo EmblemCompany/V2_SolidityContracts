@@ -253,11 +253,8 @@ contract UnvaultBatchOperationsTest is Test {
             );
         }
 
-        // Approve diamond to burn tokens
+        // Test batch unvault (no approval needed - diamond can burn directly)
         vm.startPrank(user1);
-        ERC721VaultImplementation(nftCollection).setApprovalForAll(address(diamond), true);
-
-        // Test batch unvault
         uint256 gasStart = gasleft();
 
         // Use timestamp 0 for signature verification in tests
@@ -358,6 +355,150 @@ contract UnvaultBatchOperationsTest is Test {
 
         EmblemVaultUnvaultFacet(address(diamond)).batchUnvaultWithSignedPrice(params);
         vm.stopPrank();
+    }
+
+    function testERC1155UnvaultWithSerialNumbers() public {
+        uint256 basePrice = 0.1 ether;
+        uint256 tokenId = 1;
+
+        // Create ERC1155 collection
+        vm.prank(address(diamond));
+        address erc1155Collection = factory.createERC1155Collection("https://api.test.com/");
+
+        // Prepare serial numbers for minting
+        uint256[] memory serialNumbers = new uint256[](3);
+        serialNumbers[0] = 100; // First serial
+        serialNumbers[1] = 200; // Second serial
+        serialNumbers[2] = 300; // Third serial (will be last in LIFO)
+
+        // Mint ERC1155 tokens with serial numbers
+        vm.prank(address(diamond));
+        ERC1155VaultImplementation(erc1155Collection).mintWithSerial(
+            user1, tokenId, 3, serialNumbers
+        );
+
+        // Verify initial state
+        assertEq(ERC1155VaultImplementation(erc1155Collection).balanceOf(user1, tokenId), 3);
+
+        // Check serial ownership
+        uint256[] memory userSerials =
+            ERC1155VaultImplementation(erc1155Collection).getSerials(user1, tokenId);
+        assertEq(userSerials.length, 3);
+        assertEq(userSerials[0], 100);
+        assertEq(userSerials[1], 200);
+        assertEq(userSerials[2], 300);
+
+        // Test unvaulting - should use LIFO (Last In, First Out)
+        // The last serial (index 2, serial 300) should be unvaulted first
+        uint256 lastSerialIndex =
+            ERC1155VaultImplementation(erc1155Collection).balanceOf(user1, tokenId) - 1;
+        uint256 expectedSerialToUnvault = ERC1155VaultImplementation(erc1155Collection)
+            .getSerialByOwnerAtIndex(user1, tokenId, lastSerialIndex);
+
+        console.log("Expected serial to unvault (LIFO):", expectedSerialToUnvault);
+        assertEq(expectedSerialToUnvault, 300, "Should unvault the last serial (LIFO)");
+
+        // Create signature for unvaulting
+        bytes memory signature = createUnvaultSignature(
+            erc1155Collection,
+            address(0),
+            basePrice,
+            user1,
+            tokenId,
+            12_345, // nonce
+            1, // amount is always 1 for unvaulting
+            witnessPrivateKey
+        );
+
+        // Test unvaulting (no approval needed - diamond can burn directly)
+        vm.startPrank(user1);
+
+        EmblemVaultUnvaultFacet(address(diamond)).unvaultWithSignedPrice{value: basePrice}(
+            erc1155Collection,
+            tokenId,
+            12_345, // nonce
+            address(0), // ETH payment
+            basePrice,
+            signature,
+            0 // timestamp for tests
+        );
+
+        vm.stopPrank();
+
+        // Verify post-unvault state
+        assertEq(
+            ERC1155VaultImplementation(erc1155Collection).balanceOf(user1, tokenId),
+            2,
+            "Should have 2 tokens left after unvaulting 1"
+        );
+
+        // Verify the unvaulted serial is tracked by serial number, not token ID
+        assertTrue(
+            EmblemVaultUnvaultFacet(address(diamond)).isTokenUnvaulted(
+                erc1155Collection, expectedSerialToUnvault
+            ),
+            "The specific serial number should be marked as unvaulted"
+        );
+
+        // Verify the unvaulter is recorded correctly
+        assertEq(
+            EmblemVaultUnvaultFacet(address(diamond)).getTokenUnvaulter(
+                erc1155Collection, expectedSerialToUnvault
+            ),
+            user1,
+            "User1 should be recorded as the unvaulter for this serial"
+        );
+
+        // Verify remaining serials are still owned by user1
+        uint256[] memory remainingSerials =
+            ERC1155VaultImplementation(erc1155Collection).getSerials(user1, tokenId);
+        assertEq(remainingSerials.length, 2, "Should have 2 serials remaining");
+
+        // The remaining serials should be 100 and 200 (since 300 was removed via LIFO)
+        assertEq(remainingSerials[0], 100);
+        assertEq(remainingSerials[1], 200);
+
+        // Test unvaulting another token - should unvault serial 200 next (LIFO)
+        bytes memory signature2 = createUnvaultSignature(
+            erc1155Collection,
+            address(0),
+            basePrice,
+            user1,
+            tokenId,
+            12_346, // different nonce
+            1,
+            witnessPrivateKey
+        );
+
+        vm.startPrank(user1);
+        EmblemVaultUnvaultFacet(address(diamond)).unvaultWithSignedPrice{value: basePrice}(
+            erc1155Collection, tokenId, 12_346, address(0), basePrice, signature2, 0
+        );
+        vm.stopPrank();
+
+        // Verify second unvault
+        assertEq(
+            ERC1155VaultImplementation(erc1155Collection).balanceOf(user1, tokenId),
+            1,
+            "Should have 1 token left"
+        );
+
+        // Should have unvaulted serial 200 (the new "last" serial)
+        assertTrue(
+            EmblemVaultUnvaultFacet(address(diamond)).isTokenUnvaulted(erc1155Collection, 200),
+            "Serial 200 should be marked as unvaulted"
+        );
+
+        // Verify only serial 100 remains
+        uint256[] memory finalSerials =
+            ERC1155VaultImplementation(erc1155Collection).getSerials(user1, tokenId);
+        assertEq(finalSerials.length, 1, "Should have 1 serial remaining");
+        assertEq(finalSerials[0], 100, "Only serial 100 should remain");
+
+        console.log("ERC1155 LIFO unvaulting behavior verified:");
+        console.log("   - First unvault: Serial 300 (last in array)");
+        console.log("   - Second unvault: Serial 200 (new last in array)");
+        console.log("   - Remaining: Serial 100");
     }
 
     // Helper function to create signature for minting
